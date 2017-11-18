@@ -102,6 +102,37 @@ variableAssignment = do
   _ <- P.char '\n'
   return $ VariableAssignment (VariableName name) assign (VariableValue vartext) (Comment commentT)
 
+simpleRule :: Parser Entry
+simpleRule = do
+  _ <- lineSpace
+  (tchunk, _) <- manyTill (lineSpaceCont P.many1' -- all space gets reduced to one space, but we need a parser that can fail.
+                           <|> (P.takeWhile1 isLineSpace >> P.string " ") -- see above
+                           <|> (P.string "\\:" >> return ":") -- quoted colon is ok
+                           <|> (P.string "\\#" >> return "#") -- quoted hash sign is ok
+                           <|> do { _ <- P.char '\\'; c <- P.satisfy isSpace; return $ T.cons '\\' (T.singleton c) ; } -- quoted space is ok and we need to keep the backslash
+                                                                                                                       -- that breaking into words later works.
+                           <|> P.string "\\" -- backspace is ok, but only if it doesn't escape some magic character
+                           <|> P.takeWhile1 (\c -> c /= '\\' && c/= '\n' && c /= ':' && c /= '#') -- meat of the targets
+                          ) (lineSpace *> P.string ":")
+
+  dchunk <- P.many' (lineSpaceCont P.many1' -- condense space
+                          <|> (P.takeWhile1 isLineSpace >> P.string " ") -- condense space
+                          <|> (P.string "\\|" >> return "|") -- quoted stuff ok
+                          <|> (P.string "\\#" >> return "#") -- quoted stuff ok
+                          <|> P.takeWhile1 (\c -> c /= '|' && c /= '\n' && c /= '\\' && c /= '#') -- meet of deps ok
+                         ) -- should end at unquoted \n or unquoted #
+
+  odchunk <- P.option [""] (P.char '|' >> P.many' (lineSpaceCont P.many1' -- condense space
+                            <|> (P.takeWhile1 isLineSpace >> P.string " ") -- condense space
+                            <|> (P.string "\\#" >> return "#") -- quoted stuff ok
+                            <|> P.takeWhile1 (\c -> c /= '\n' && c /= '\\' && c /= '#') -- meet of deps ok
+                            )) -- should end at unquoted \n or unquoted #
+  commentStuff <- P.option "" comment
+  _ <- P.char '\n'
+  recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
+                                   >> recipeLine)
+  return $ SimpleRule (Target . T.concat $ tchunk) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } recipeLines (Comment commentStuff)
+
 -- rule "target stuff : depstuff | odepstuff # commentstuff"
 -- targetstuff can only contain escaped : and only escaped #  everything else is normal make (line cont and stuff)
 -- depstuff can contain escaped | and escaped # everything else is normal
