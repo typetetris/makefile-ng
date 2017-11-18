@@ -68,7 +68,7 @@ assignOp = (P.string "::=" >> return PosixSimple)
        <|> (P.string "=" >> return Recursive)
 
 variableNameChunk :: Parser Text
-variableNameChunk = P.takeWhile (\c -> c /= '\\' && c /= '\n'
+variableNameChunk = P.takeWhile1 (\c -> c /= '\\' && c /= '\n'
                                   && not (isSpace c)
                                   && c /= '#'  && c /= ':' && c /= '='
                                   && c /= '!' && c /= '?')
@@ -77,6 +77,7 @@ manyTill :: Parser a -> Parser b -> Parser ([a], b)
 manyTill elemP end = scan []
   where
     scan xs = do { endVal <- end; return (reverse xs, endVal) ; } <|> do { nextVal <- elemP; scan (nextVal : xs) ; }
+
 
 -- no :, =, # or whitespace
 variableName :: Parser (Text, AssignOp)
