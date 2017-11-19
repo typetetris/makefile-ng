@@ -78,7 +78,6 @@ manyTill elemP end = scan []
   where
     scan xs = do { endVal <- end; return (reverse xs, endVal) ; } <|> do { nextVal <- elemP; scan (nextVal : xs) ; }
 
-
 -- no :, =, # or whitespace
 variableName :: Parser (Text, AssignOp)
 variableName = do
@@ -86,17 +85,31 @@ variableName = do
   (chunks, assign) <- manyTill (P.string "!" <|> P.string "?" <|> P.string "\\" <|> variableNameChunk) (lineSpace *> assignOp)
   return (T.concat chunks, assign)
 
+commentOrMakeTextChunk :: String -> Bool -> Parser Text
+commentOrMakeTextChunk escapedOk keepQuotedSpaceQuoted = let escapes = P.choice (map (\c -> P.char '\\' >> P.char c >> return (T.singleton c)) escapedOk) in
+  lineSpaceCont P.many1' -- condense space around line continuation
+  <|> P.takeWhile1 isLineSpace -- take space unchanged otherwhise
+  <|> escapes -- one of the chars, which are ok if quoted
+  <|> if keepQuotedSpaceQuoted
+      then fmap (T.cons '\\' . T.singleton) (P.char '\\' >> P.satisfy isSpace) -- quoted space needs to preserve the quote -- testcase "\\  \\\n " must become "\\  " and not "\\ "
+      else empty
+  <|> P.string "\\" -- a quote itself is ok if it doesn't mask some magic char.
+  <|> P.takeWhile1 (\c -> notElem c escapedOk && c /= '\\' && c /= '\n' && not (isSpace c))
+
 comment :: Parser Text
 comment = do
   _ <- P.char '#'
-  rest <-  P.many' $ lineSpaceCont P.many1' <|> P.takeWhile1 isLineSpace <|> P.takeWhile1 (not . isSpace)
+  rest <-  P.many' $ commentOrMakeTextChunk "" False
   return $ T.concat rest
+
+standardMakeTextChunk :: String -> Parser Text
+standardMakeTextChunk escapedOk = commentOrMakeTextChunk escapedOk True
 
 variableAssignment :: Parser Entry
 variableAssignment = do
   (name, assign) <- variableName
   _ <- lineSpace
-  rest <- P.many' $ P.string "\\#" <|> lineSpaceCont P.many1' <|> P.string "\\" <|> P.takeWhile1 isLineSpace <|> P.takeWhile1 (\c -> c /= '#' && c /= '\n' && c /= '\\' && not (isSpace c))
+  rest <- P.many' $ standardMakeTextChunk "#"
   let vartext = T.concat rest
   commentT <- P.option "" comment
   _ <- P.char '\n'
@@ -105,28 +118,10 @@ variableAssignment = do
 simpleRule :: Parser Entry
 simpleRule = do
   _ <- lineSpace
-  (tchunk, _) <- manyTill (lineSpaceCont P.many1' -- all space gets reduced to one space, but we need a parser that can fail.
-                           <|> (P.takeWhile1 isLineSpace >> P.string " ") -- see above
-                           <|> (P.string "\\:" >> return ":") -- quoted colon is ok
-                           <|> (P.string "\\#" >> return "#") -- quoted hash sign is ok
-                           <|> do { _ <- P.char '\\'; c <- P.satisfy isSpace; return $ T.cons '\\' (T.singleton c) ; } -- quoted space is ok and we need to keep the backslash
-                                                                                                                       -- that breaking into words later works.
-                           <|> P.string "\\" -- backspace is ok, but only if it doesn't escape some magic character
-                           <|> P.takeWhile1 (\c -> c /= '\\' && c/= '\n' && c /= ':' && c /= '#') -- meat of the targets
-                          ) (lineSpace *> P.string ":")
-
-  dchunk <- P.many' (lineSpaceCont P.many1' -- condense space
-                          <|> (P.takeWhile1 isLineSpace >> P.string " ") -- condense space
-                          <|> (P.string "\\|" >> return "|") -- quoted stuff ok
-                          <|> (P.string "\\#" >> return "#") -- quoted stuff ok
-                          <|> P.takeWhile1 (\c -> c /= '|' && c /= '\n' && c /= '\\' && c /= '#') -- meet of deps ok
-                         ) -- should end at unquoted \n or unquoted #
-
-  odchunk <- P.option [""] (P.char '|' >> P.many' (lineSpaceCont P.many1' -- condense space
-                            <|> (P.takeWhile1 isLineSpace >> P.string " ") -- condense space
-                            <|> (P.string "\\#" >> return "#") -- quoted stuff ok
-                            <|> P.takeWhile1 (\c -> c /= '\n' && c /= '\\' && c /= '#') -- meet of deps ok
-                            )) -- should end at unquoted \n or unquoted #
+  tchunk       <- P.many' (standardMakeTextChunk ":#")
+  _            <- P.char ':'
+  dchunk       <- P.many' (standardMakeTextChunk "|#")
+  odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
   commentStuff <- P.option "" comment
   _ <- P.char '\n'
   recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
