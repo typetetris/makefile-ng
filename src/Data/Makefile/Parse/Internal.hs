@@ -90,9 +90,9 @@ commentOrMakeTextChunk escapedOk keepQuotedSpaceQuoted = let escapes = P.choice 
   (lineSpaceCont P.many1' -- condense space around line continuation
   <|> P.takeWhile1 isLineSpace -- take space unchanged otherwhise
   <|> escapes -- one of the chars, which are ok if quoted
-  <|> if keepQuotedSpaceQuoted
+  <|> (if keepQuotedSpaceQuoted
       then fmap (T.cons '\\' . T.singleton) (P.char '\\' >> P.satisfy isSpace) -- quoted space needs to preserve the quote -- testcase "\\  \\\n " must become "\\  " and not "\\ "
-      else empty
+      else empty)
   <|> P.string "\\" -- a quote itself is ok if it doesn't mask some magic char.
   <|> P.takeWhile1 (\c -> notElem c escapedOk && c /= '\\' && c /= '\n' && not (isSpace c))) <?> "basic make text chunk"
 
