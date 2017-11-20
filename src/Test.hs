@@ -13,4 +13,4 @@ main = hspec $ do
       parseOnly (standardMakeTextChunk "#") "abc" `shouldBe` (Right "abc")
   describe "Basic Variable Assignment" $
     it "parses a = b\\n" $
-      parseOnly variableAssignment "a = b\n" `shouldBe` Right (VariableAssignment (VariableName "a") Simple (VariableValue "b") (Comment ""))
+      parseOnly variableAssignment "a = b\n" `shouldBe` Right (VariableAssignment (VariableName "a") Recursive (VariableValue "b") (Comment ""))
