@@ -16,5 +16,18 @@ library
   build-depends:        base         >= 4.7 && < 5
                       , attoparsec
                       , text
-  other-modules:       Data.Makefile.Parse.Internal
-  ghc-options:        -Wall -fwarn-tabs
+  other-modules:        Data.Makefile.Parse.Internal
+                      , Data.Makefile
+  ghc-options:          -Wall -fwarn-tabs
+
+test-suite standard
+                type:                exitcode-stdio-1.0
+                main-is:             Test.hs
+                build-depends:       base >= 4.7 && < 5
+                                   , attoparsec
+                                   , text
+                                   , hspec
+                hs-source-dirs:      src
+                default-language:    Haskell2010
+                other-modules:       Data.Makefile
+                                   , Data.Makefile.Parse.Internal
