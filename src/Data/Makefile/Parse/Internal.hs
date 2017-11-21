@@ -120,6 +120,7 @@ simpleRule = do
   _ <- lineSpace
   tchunk       <- P.many' (standardMakeTextChunk ":#")
   _            <- P.char ':'
+  _ <- lineSpace
   dchunk       <- P.many' (standardMakeTextChunk "|#")
   odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
   commentStuff <- P.option "" comment
