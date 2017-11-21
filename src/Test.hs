@@ -3,6 +3,7 @@ module Main where
 
 import Test.Hspec
 import Data.Attoparsec.Text
+import Data.Text (Text)
 import Data.Makefile
 import qualified Data.Makefile.Parse.Internal as PM
 
@@ -59,8 +60,35 @@ rule =
       parseOnly PM.simpleRule
       "a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after comment only line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after comment only line"]) (Comment "Muhaha"))
 
+smallMakefileResult :: Makefile
+smallMakefileResult = Makefile
+  [ CommentLine (Comment " A first comment line")
+  , SimpleRule (Target "a") Dependencies{normal="b c ", orderOnly=""} [RecipeLine "With a recipe line"] (Comment " a little rule")
+  , PatternRule (Target "%.o") Dependencies{normal="%.c ", orderOnly=""} [RecipeLine "${LD} ${LDFLAGS} $< -o $@"] (Comment " little pattern rule")
+  , StaticPatternRule (Target "a.t b.t c.t ") (Target " %.t ") Dependencies{normal="%.v ", orderOnly=" f "} [RecipeLine "möp"] (Comment " wow a static pattern rule with a order only dependency, look at that!")
+  , VariableAssignment (VariableName "${wtf}") Conditional (VariableValue "${wtf2} ") (Comment " comment on that boy!")
+  ]
+
+smallMakefile :: Text
+smallMakefile = "\
+\  # A first comment line\n\
+\a: b c # a little rule\n\
+\\tWith a recipe line\n\
+\%.o: %.c # little pattern rule\n\
+\\t${LD} ${LDFLAGS} $< -o $@\n\
+\a.t b.t c.t : %.t : %.v | f # wow a static pattern rule with a order only dependency, look at that!\n\
+\\tmöp\n\
+\${wtf} ?= ${wtf2} # comment on that boy!\n"
+
+
+makefile :: SpecWith ()
+makefile = describe "test makefile parsing" $
+  it "parses a little makefile" $
+    parseOnly PM.makefile smallMakefile `shouldBe` Right smallMakefileResult
+
 main :: IO()
 main = hspec $ do
   basicTextParsing
   variableAssignment
   rule
+  makefile

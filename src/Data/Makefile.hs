@@ -25,4 +25,5 @@ data Entry = SimpleRule Target Dependencies [RecipeLine] Comment
            | PatternRule Target Dependencies [RecipeLine] Comment
            | StaticPatternRule Target Target Dependencies [RecipeLine] Comment
            | VariableAssignment VariableName AssignOp VariableValue Comment
+           | CommentLine Comment
   deriving (Eq, Show)
