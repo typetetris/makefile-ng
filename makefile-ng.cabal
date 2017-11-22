@@ -11,14 +11,15 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  hs-source-dirs:       src
-  default-language:     Haskell2010
-  build-depends:        base         >= 4.7 && < 5
-                      , attoparsec
-                      , text
-  other-modules:        Data.Makefile.Parse.Internal
-                      , Data.Makefile
-  ghc-options:          -Wall -fwarn-tabs
+  hs-source-dirs:      src
+  default-language:    Haskell2010
+  build-depends:       base         >= 4.7 && < 5
+                     , attoparsec
+                     , text
+  exposed-modules:     Data.Makefile
+                     , Data.Makefile.Parse
+                     , Data.Makefile.Parse.Internal
+  ghc-options:         -Wall -fwarn-tabs
 
 test-suite standard
                 type:                exitcode-stdio-1.0
