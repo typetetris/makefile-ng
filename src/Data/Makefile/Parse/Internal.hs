@@ -171,10 +171,10 @@ staticPatternRule = do
 entry :: Parser Entry
 entry =  do
   _ <- P.many' (lineSpace >> P.char '\n')
-  staticPatternRule <|>
+  variableAssignment <|>
+    staticPatternRule <|>
     patternRule <|>
     simpleRule <|>
-    variableAssignment <|>
     (CommentLine <$> (lineSpace *> comment <* P.char '\n'))
 
 makefile :: Parser Makefile
