@@ -11,6 +11,9 @@ import qualified Data.Makefile.Parse.Internal as PM
 simpleAEqualb :: Either a Entry
 simpleAEqualb = Right (VariableAssignment (VariableName "a") Recursive (VariableValue "b") (Comment ""))
 
+varWithColonValue :: Entry
+varWithColonValue = VariableAssignment (VariableName "VARNAME") Recursive (VariableValue ":") (Comment "")
+
 basicTextParsing :: SpecWith ()
 basicTextParsing  =
   describe "basic make text parsing" $
@@ -35,6 +38,9 @@ variableAssignment =
     it "should fail on '  a  b = c \n'" $
       parseOnly PM.variableAssignment
       "  a  b = c \n" `shouldSatisfy` isLeft
+    it "parses 'VARNAME = :\\n'" $
+      parseOnly PM.variableAssignment
+      "VARNAME = :\n" `shouldBe` Right varWithColonValue
 
 rule :: SpecWith ()
 rule =
@@ -98,9 +104,11 @@ smallMakefile = "\
 
 
 makefile :: SpecWith ()
-makefile = describe "test makefile parsing" $
+makefile = describe "test makefile parsing" $ do
   it "parses a little makefile" $
     parseOnly PM.makefile smallMakefile `shouldBe` Right smallMakefileResult
+  it "parses 'VARNAME = :\\n'" $
+    parseOnly PM.makefile "VARNAME = :\n" `shouldBe` Right (Makefile [varWithColonValue])
 
 main :: IO()
 main = hspec $ do
