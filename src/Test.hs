@@ -50,6 +50,9 @@ rule =
     it "parses a: b|c#Muhaha\n\tfirst recipe line\n" $
       parseOnly PM.simpleRule
       "a: b|c#Muhaha\n\tfirst recipe line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [RecipeLine "first recipe line"] (Comment "Muhaha"))
+    it "parses a: b|c#Muhaha\n\tfirst recipe line\\\n\twith a line continuation\n" $
+      parseOnly PM.simpleRule
+      "a: b|c#Muhaha\n\tfirst recipe line\\\n\twith a line continuation\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [RecipeLine "first recipe line\\\nwith a line continuation"] (Comment "Muhaha"))
     it "parses a: b|c#Muhaha\n\tfirst recipe line\n\n\tsecond recipe line after empty line\n" $
       parseOnly PM.simpleRule
       "a: b|c#Muhaha\n\tfirst recipe line\n\n\tsecond recipe line after empty line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after empty line"]) (Comment "Muhaha"))
@@ -61,7 +64,13 @@ rule =
       "a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after comment only line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after comment only line"]) (Comment "Muhaha"))
     it "parses a: b ; do something\n" $
       parseOnly PM.simpleRule "a: b ; do something\n" `shouldBe`
-           Right (SimpleRule (Target "a") Dependencies{normal = " b", orderOnly = ""} [RecipeLine " do something"] (Comment ""))
+           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something"] (Comment ""))
+    it "parses a: b ; do something # comment on inlineRecipeLine\n" $
+      parseOnly PM.simpleRule "a: b ; do something # comment on inlineRecipeLine\n" `shouldBe`
+           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something # comment on inlineRecipeLine"] (Comment ""))
+    it "parses a: b ; do something # comment on inlineRecipeLine\n\tsecond Recipe Line # with comment\n" $
+      parseOnly PM.simpleRule "a: b ; do something # comment on inlineRecipeLine\n\tsecond Recipe Line # with comment\n" `shouldBe`
+           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something # comment on inlineRecipeLine", RecipeLine "second Recipe Line # with comment"] (Comment ""))
 
 smallMakefileResult :: Makefile
 smallMakefileResult = Makefile
