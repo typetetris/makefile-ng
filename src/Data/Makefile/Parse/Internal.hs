@@ -163,6 +163,9 @@ staticPatternRule = do
                                    >> recipeLine)
   return $ StaticPatternRule (Target ttchunk) (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } recipeLines (Comment commentStuff)
 
+otherLine :: Parser Entry
+otherLine = OtherLine . T.concat <$> (P.many' (standardMakeTextChunk "") <* P.char '\n')
+
 entry :: Parser Entry
 entry =  do
   _ <- P.many' (lineSpace >> P.char '\n')
@@ -170,7 +173,8 @@ entry =  do
     patternRule <|>
     simpleRule <|>
     variableAssignment <|>
-    (CommentLine . Comment <$> (lineSpace >> comment <* P.char '\n'))
+    (CommentLine . Comment <$> (lineSpace >> comment <* P.char '\n')) <|>
+    otherLine
 
 makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
