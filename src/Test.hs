@@ -109,6 +109,14 @@ makefile = describe "test makefile parsing" $ do
     parseOnly PM.makefile smallMakefile `shouldBe` Right smallMakefileResult
   it "parses 'VARNAME = :\\n'" $
     parseOnly PM.makefile "VARNAME = :\n" `shouldBe` Right (Makefile [varWithColonValue])
+  it "parses 'define VARNAME\nline1\nline2\nendef\n'" $
+    parseOnly PM.makefile "define VARNAME\nline1\nline2\nendef\n" `shouldBe` Right (Makefile [MultilineVariableAssignment
+                                                                                              (VariableName "VARNAME")
+                                                                                              Recursive
+                                                                                              [ VariableValue "line1"
+                                                                                              , VariableValue "line2"
+                                                                                              ]
+                                                                                              (Comment "")])
 
 main :: IO()
 main = hspec $ do

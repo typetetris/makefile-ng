@@ -14,6 +14,7 @@ import qualified Data.Text.Lazy.Builder as LTB
 
 import Data.Monoid
 import Control.Applicative
+import Control.Monad (void)
 import Data.Char (isSpace)
 
 data RecipeLineParseState =
@@ -106,6 +107,14 @@ comment = (do
 standardMakeTextChunk :: String -> Parser Text
 standardMakeTextChunk escapedOk = commentOrMakeTextChunk escapedOk True
 
+quoteNotLineContinuation :: Parser Text
+quoteNotLineContinuation = do
+  _ <- P.char '\\'
+  c <- P.peekChar
+  case c of
+    (Just '\n') -> fail "line continuation"
+    _           -> return $ T.singleton '\\'
+
 variableAssignment :: Parser Entry
 variableAssignment = do
   (name, assign) <- variableName
@@ -116,12 +125,36 @@ variableAssignment = do
   _ <- P.char '\n' <?> "variable assignment newline"
   return $ VariableAssignment (VariableName name) assign (VariableValue vartext) commentT
 
+multiLineVariableName :: Parser (Text, AssignOp)
+multiLineVariableName = lineSpace *> ((\c -> (c, Recursive)) <$> (P.string "!" <|> P.string "?" <|> quoteNotLineContinuation <|> variableNameChunk))
+
+multiLineVariableDefinitionLine :: Parser (VariableName, AssignOp, Comment)
+multiLineVariableDefinitionLine  = do
+  _ <- P.string "define"
+  _ <- lineSpace
+  (name, assign) <- variableName <|> multiLineVariableName
+  _ <- lineSpace
+  commentT <- P.option (Comment "") comment
+  _<- P.char '\n'
+  return (VariableName name, assign, commentT)
+
+multiLineVariableBody :: Parser [VariableValue]
+multiLineVariableBody = manyTill ((VariableValue . T.concat <$>
+                                   P.many' (commentOrMakeTextChunk "" False)) <* P.char '\n')
+                        (P.string "endef\n") >>= \(b, _) -> return b
+
+multiLineVariableAssignment :: Parser Entry
+multiLineVariableAssignment = do
+  (n, a, c) <- multiLineVariableDefinitionLine
+  b <- multiLineVariableBody
+  return $ MultilineVariableAssignment n a b c
+
 inlineRecipeChunk :: Parser RecipeLine
 inlineRecipeChunk = P.char ';' *> recipeLineStuff
 
 ignoreWhitespaceOrCommentsLines :: Parser ()
-ignoreWhitespaceOrCommentsLines = (P.many' $ (lineSpace >> comment >> P.char '\n') <|> -- comment line
-                                             (lineSpace >> P.char '\n')) >> return ()   -- whitespace or empty line
+ignoreWhitespaceOrCommentsLines = void (P.many' $ (lineSpace >> comment >> P.char '\n') <|> -- comment line
+                                             (lineSpace >> P.char '\n'))   -- whitespace or empty line
 
 ruleRest :: Parser (Dependencies, [RecipeLine], Comment)
 ruleRest = do
@@ -146,27 +179,29 @@ simpleRule = do
   (d, r, c) <- ruleRest
   return $ SimpleRule (Target tchunk) d r c
 
-patternRule :: Parser Entry
-patternRule = do
-  _         <- lineSpace
+targetPattern :: Parser Target
+targetPattern = do
   tchunk1   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
   _         <- P.char '%'
   tchunk2   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
   _         <- P.char ':'
+  return $ Target $ T.concat [tchunk1, "%", tchunk2]
+
+patternRule :: Parser Entry
+patternRule = do
+  _         <- lineSpace
+  t         <- targetPattern
   (d, r, c) <- ruleRest
-  return $ PatternRule (Target $ T.concat [tchunk1, "%", tchunk2]) d r c
+  return $ PatternRule t d r c
 
 staticPatternRule :: Parser Entry
 staticPatternRule = do
   _ <- lineSpace
   ttchunk   <- T.concat <$> P.many' (standardMakeTextChunk ":#")
   _         <- P.char ':'
-  tchunk1   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _         <- P.char '%'
-  tchunk2   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _         <- P.char ':'
+  t         <- targetPattern
   (d, r, c) <- ruleRest
-  return $ StaticPatternRule (Target ttchunk) (Target $ T.concat [tchunk1, "%", tchunk2]) d r c
+  return $ StaticPatternRule (Target ttchunk) t d r c
 
 entry :: Parser Entry
 entry =  do
@@ -175,7 +210,8 @@ entry =  do
     staticPatternRule <|>
     patternRule <|>
     simpleRule <|>
-    (CommentLine <$> (lineSpace *> comment <* P.char '\n'))
+    (CommentLine <$> (lineSpace *> comment <* P.char '\n')) <|>
+    multiLineVariableAssignment
 
 makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
