@@ -42,12 +42,14 @@ lineContinuation = P.string "\\\n" <?> "line continuation"
 recipeLineContinuation :: Parser Text
 recipeLineContinuation = P.string "\\\n\t" >> return "\\\n" <?> "recipe line continuation"
 
-recipeLine :: Parser RecipeLine
-recipeLine = do
+recipeLineStuff :: Parser RecipeLine
+recipeLineStuff = do
   _ <- P.char '\t'
   rest <- P.many' (recipeLineContinuation <|> lineContinuation <|> P.string "\\" <|> P.takeWhile1 (\c -> c /= '\\' && c /= '\n'))
-  _ <- P.char '\n'
   return $ RecipeLine $ T.concat rest
+
+recipeLine :: Parser RecipeLine
+recipeLine = P.char '\t' *> recipeLineStuff <* P.char '\n'
 
 isLineSpace :: Char -> Bool
 isLineSpace c = c /= '\n' && isSpace c
@@ -118,16 +120,25 @@ variableAssignment = do
 simpleRule :: Parser Entry
 simpleRule = do
   _ <- lineSpace
-  tchunk       <- P.many' (standardMakeTextChunk ":%#")
+  tchunk       <- P.many' (standardMakeTextChunk ":%#;")
   _            <- P.char ':'
   _ <- lineSpace
-  dchunk       <- P.many' (standardMakeTextChunk "|#")
+  dchunk       <- P.many' (standardMakeTextChunk "|#;")
   odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
-  commentStuff <- P.option "" comment
+  
+  commentOrRecipeline <- P.option Nothing (Just <$> ((Left <$> comment) <|> (Right <$>(P.char ';' *> recipeLineStuff))))
   _ <- P.char '\n'
   recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
                                    >> recipeLine)
-  return $ SimpleRule (Target . T.concat $ tchunk) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } recipeLines (Comment commentStuff)
+  let (recipeLines2, commentStuff) = case commentOrRecipeline of
+        Nothing                      -> (recipeLines, "")
+        Just (Left commentS)         -> (recipeLines, commentS)
+        Just (Right recipeLineFirst) -> (recipeLineFirst : recipeLines, "")
+  return $ SimpleRule (Target . T.concat $ tchunk)
+                      Dependencies{ normal= Normal (T.concat dchunk)
+                                  , orderOnly = OrderOnly (T.concat odchunk) }
+                      recipeLines2
+                      (Comment commentStuff)
 
 patternRule :: Parser Entry
 patternRule = do
@@ -139,11 +150,12 @@ patternRule = do
   _ <- lineSpace
   dchunk       <- P.many' (standardMakeTextChunk "|#")
   odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
+  ronlinechunk <- P.option Nothing (Just <$> (P.char ';' >> recipeLineStuff))
   commentStuff <- P.option "" comment
   _ <- P.char '\n'
   recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
                                    >> recipeLine)
-  return $ PatternRule (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } recipeLines (Comment commentStuff)
+  return $ PatternRule (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } (maybe recipeLines (:recipeLines) ronlinechunk) (Comment commentStuff)
 
 staticPatternRule :: Parser Entry
 staticPatternRule = do
@@ -157,11 +169,12 @@ staticPatternRule = do
   _ <- lineSpace
   dchunk       <- P.many' (standardMakeTextChunk "|#")
   odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
+  ronlinechunk <- P.option Nothing (Just <$> (P.char ';' >> recipeLineStuff))
   commentStuff <- P.option "" comment
   _ <- P.char '\n'
   recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
                                    >> recipeLine)
-  return $ StaticPatternRule (Target ttchunk) (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } recipeLines (Comment commentStuff)
+  return $ StaticPatternRule (Target ttchunk) (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } (maybe recipeLines (:recipeLines) ronlinechunk) (Comment commentStuff)
 
 entry :: Parser Entry
 entry =  do
