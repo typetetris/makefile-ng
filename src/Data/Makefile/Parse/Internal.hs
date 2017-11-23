@@ -44,7 +44,6 @@ recipeLineContinuation = P.string "\\\n\t" >> return "\\\n" <?> "recipe line con
 
 recipeLineStuff :: Parser RecipeLine
 recipeLineStuff = do
-  _ <- P.char '\t'
   rest <- P.many' (recipeLineContinuation <|> lineContinuation <|> P.string "\\" <|> P.takeWhile1 (\c -> c /= '\\' && c /= '\n'))
   return $ RecipeLine $ T.concat rest
 
@@ -98,11 +97,11 @@ commentOrMakeTextChunk escapedOk keepQuotedSpaceQuoted = let escapes = P.choice 
   <|> P.string "\\" -- a quote itself is ok if it doesn't mask some magic char.
   <|> P.takeWhile1 (\c -> notElem c escapedOk && c /= '\\' && c /= '\n' && not (isSpace c))) <?> "basic make text chunk"
 
-comment :: Parser Text
+comment :: Parser Comment
 comment = (do
   _ <- P.char '#'
-  rest <-  P.many' $ commentOrMakeTextChunk "" False
-  return $ T.concat rest) <?> "comment"
+  rest <-  T.concat <$> P.many' (commentOrMakeTextChunk "" False)
+  return $ Comment rest) <?> "comment"
 
 standardMakeTextChunk :: String -> Parser Text
 standardMakeTextChunk escapedOk = commentOrMakeTextChunk escapedOk True
@@ -115,66 +114,59 @@ variableAssignment = do
   let vartext = T.concat rest
   commentT <- P.option "" comment
   _ <- P.char '\n' <?> "variable assignment newline"
-  return $ VariableAssignment (VariableName name) assign (VariableValue vartext) (Comment commentT)
+  return $ VariableAssignment (VariableName name) assign (VariableValue vartext) commentT
+
+inlineRecipeChunk :: Parser RecipeLine
+inlineRecipeChunk = P.char ';' *> recipeLineStuff
+
+ignoreWhitespaceOrCommentsLines :: Parser ()
+ignoreWhitespaceOrCommentsLines = (P.many' $ (lineSpace >> comment >> P.char '\n') <|> -- comment line
+                                             (lineSpace >> P.char '\n')) >> return ()   -- whitespace or empty line
+
+ruleRest :: Parser (Dependencies, [RecipeLine], Comment)
+ruleRest = do
+  _ <- lineSpace
+  dchunk       <- T.concat <$> P.many' (standardMakeTextChunk "|#;")
+  odchunk      <- T.concat <$> P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#;"))
+  maybeCommentOrRecipeline <- P.option Nothing $ ((Just . Left) <$> comment) <|>
+                                                 ((Just . Right) <$> inlineRecipeChunk)
+  _ <- P.char '\n'
+  recipeLines <- P.many' (ignoreWhitespaceOrCommentsLines *> recipeLine)
+  let (r, c) = case maybeCommentOrRecipeline of
+                 Nothing         -> (recipeLines, Comment "")
+                 Just (Left co)  -> (recipeLines, co)
+                 Just (Right re) -> (re : recipeLines, Comment "")
+  return (Dependencies{normal = Normal dchunk, orderOnly = OrderOnly odchunk}, r, c)
 
 simpleRule :: Parser Entry
 simpleRule = do
   _ <- lineSpace
-  tchunk       <- P.many' (standardMakeTextChunk ":%#;")
-  _            <- P.char ':'
-  _ <- lineSpace
-  dchunk       <- P.many' (standardMakeTextChunk "|#;")
-  odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
-  
-  commentOrRecipeline <- P.option Nothing (Just <$> ((Left <$> comment) <|> (Right <$>(P.char ';' *> recipeLineStuff))))
-  _ <- P.char '\n'
-  recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
-                                   >> recipeLine)
-  let (recipeLines2, commentStuff) = case commentOrRecipeline of
-        Nothing                      -> (recipeLines, "")
-        Just (Left commentS)         -> (recipeLines, commentS)
-        Just (Right recipeLineFirst) -> (recipeLineFirst : recipeLines, "")
-  return $ SimpleRule (Target . T.concat $ tchunk)
-                      Dependencies{ normal= Normal (T.concat dchunk)
-                                  , orderOnly = OrderOnly (T.concat odchunk) }
-                      recipeLines2
-                      (Comment commentStuff)
+  tchunk    <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
+  _         <- P.char ':'
+  (d, r, c) <- ruleRest
+  return $ SimpleRule (Target tchunk) d r c
 
 patternRule :: Parser Entry
 patternRule = do
-  _ <- lineSpace
-  tchunk1      <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _            <- P.char '%'
-  tchunk2      <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _            <- P.char ':'
-  _ <- lineSpace
-  dchunk       <- P.many' (standardMakeTextChunk "|#")
-  odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
-  ronlinechunk <- P.option Nothing (Just <$> (P.char ';' >> recipeLineStuff))
-  commentStuff <- P.option "" comment
-  _ <- P.char '\n'
-  recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
-                                   >> recipeLine)
-  return $ PatternRule (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } (maybe recipeLines (:recipeLines) ronlinechunk) (Comment commentStuff)
+  _         <- lineSpace
+  tchunk1   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
+  _         <- P.char '%'
+  tchunk2   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
+  _         <- P.char ':'
+  (d, r, c) <- ruleRest
+  return $ PatternRule (Target $ T.concat [tchunk1, "%", tchunk2]) d r c
 
 staticPatternRule :: Parser Entry
 staticPatternRule = do
   _ <- lineSpace
-  ttchunk      <- T.concat <$> P.many' (standardMakeTextChunk ":#")
-  _            <- P.char ':'
-  tchunk1      <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _            <- P.char '%'
-  tchunk2      <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
-  _            <- P.char ':'
-  _ <- lineSpace
-  dchunk       <- P.many' (standardMakeTextChunk "|#")
-  odchunk      <- P.option [""] (P.char '|' >> P.many' (standardMakeTextChunk "#"))
-  ronlinechunk <- P.option Nothing (Just <$> (P.char ';' >> recipeLineStuff))
-  commentStuff <- P.option "" comment
-  _ <- P.char '\n'
-  recipeLines <- P.many' (P.many' ((lineSpace >> comment >> P.char '\n') <|> (lineSpace >> P.char '\n')) -- ignore whitespace lines, or comment only lines. Those are lost for now.
-                                   >> recipeLine)
-  return $ StaticPatternRule (Target ttchunk) (Target (T.concat [tchunk1, "%", tchunk2])) Dependencies{ normal= Normal (T.concat dchunk), orderOnly = OrderOnly (T.concat odchunk) } (maybe recipeLines (:recipeLines) ronlinechunk) (Comment commentStuff)
+  ttchunk   <- T.concat <$> P.many' (standardMakeTextChunk ":#")
+  _         <- P.char ':'
+  tchunk1   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
+  _         <- P.char '%'
+  tchunk2   <- T.concat <$> P.many' (standardMakeTextChunk ":%#")
+  _         <- P.char ':'
+  (d, r, c) <- ruleRest
+  return $ StaticPatternRule (Target ttchunk) (Target $ T.concat [tchunk1, "%", tchunk2]) d r c
 
 entry :: Parser Entry
 entry =  do
@@ -183,7 +175,7 @@ entry =  do
     patternRule <|>
     simpleRule <|>
     variableAssignment <|>
-    (CommentLine . Comment <$> (lineSpace >> comment <* P.char '\n'))
+    (CommentLine <$> (lineSpace *> comment <* P.char '\n'))
 
 makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
