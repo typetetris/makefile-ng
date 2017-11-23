@@ -5,6 +5,7 @@ import Test.Hspec
 import Data.Attoparsec.Text
 import Data.Text (Text)
 import Data.Makefile
+import Data.Either (isLeft)
 import qualified Data.Makefile.Parse.Internal as PM
 
 simpleAEqualb :: Either a Entry
@@ -31,6 +32,9 @@ variableAssignment =
     it "parses a \\\n  = \\\n\tb\\n" $
       parseOnly PM.variableAssignment
       "a \\\n   = \\\n\tb\n" `shouldBe` simpleAEqualb
+    it "should fail on '  a  b = c \n'" $
+      parseOnly PM.variableAssignment
+      "  a  b = c \n" `shouldSatisfy` isLeft
 
 rule :: SpecWith ()
 rule =
