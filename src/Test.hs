@@ -59,6 +59,9 @@ rule =
     it "parses a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after whitespace line\n" $
       parseOnly PM.simpleRule
       "a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after comment only line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after comment only line"]) (Comment "Muhaha"))
+    it "parses a: b ; do something\n" $
+      parseOnly PM.simpleRule "a: b ; do something\n" `shouldBe`
+           Right (SimpleRule (Target "a") Dependencies{normal = " b", orderOnly = ""} [RecipeLine " do something"] (Comment ""))
 
 smallMakefileResult :: Makefile
 smallMakefileResult = Makefile
