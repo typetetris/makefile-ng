@@ -41,6 +41,9 @@ variableAssignment =
     it "parses 'VARNAME = :\\n'" $
       parseOnly PM.variableAssignment
       "VARNAME = :\n" `shouldBe` Right varWithColonValue
+    it "parses an empty variable value 'VARNAME =\\n'" $
+      parseOnly PM.variableAssignment
+      "VARNAME =\n" `shouldBe` Right (VariableAssignment (VariableName "VARNAME") Recursive (VariableValue "") (Comment ""))
 
 rule :: SpecWith ()
 rule =
