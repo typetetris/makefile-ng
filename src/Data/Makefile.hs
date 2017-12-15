@@ -4,6 +4,12 @@ module Data.Makefile where
 import Data.Text   (Text)
 import Data.String (IsString)
 
+newtype UnevaluatedText = UnevaluatedText [Chunk] deriving (Eq, Show)
+data Chunk = Plain Text |
+             VariableReference UnevaluatedText |
+             FunctionCall Text [UnevaluatedText]
+  deriving (Eq, Show)
+
 newtype Makefile = Makefile { entries :: [Entry] } deriving (Eq, Show)
 
 newtype Target              = Target        Text deriving (Eq, Show, IsString)
@@ -28,3 +34,4 @@ data Entry = SimpleRule Target Dependencies [RecipeLine] Comment
            | CommentLine Comment
            | MultilineVariableAssignment VariableName AssignOp [VariableValue] Comment
   deriving (Eq, Show)
+
