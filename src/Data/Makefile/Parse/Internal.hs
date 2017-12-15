@@ -16,6 +16,7 @@ import Data.Monoid
 import Control.Applicative
 import Control.Monad (void)
 import Data.Char (isSpace)
+import Data.Maybe (fromJust)
 
 data RecipeLineParseState =
     Clear
@@ -30,12 +31,21 @@ pNC (b, QuotedNewlineSeen) '\t' = Just (b, Clear)
 pNC (_, _) '\n' = Nothing
 pNC (b, _) ch = Just (b <> LTB.singleton ch, Clear)
 
-
 recipeLine2 :: Parser Text
 recipeLine2 = do
   _ <- P.char '\t'
   (_, (b, _)) <- P.runScanner (LTB.fromText T.empty, Clear) pNC
   return $ LT.toStrict $ LTB.toLazyText b
+
+stopAtClosing :: (Char -> Bool) -> Char -> Char -> Int -> Parser (Text, Int)
+stopAtClosing satisfy start stop danglingOpen = go
+  where
+    go = P.runScanner danglingOpen (\stillOpen c -> case c of
+                                 _ | c == start -> Just (stillOpen + 1)
+                                   | c == stop && stillOpen > 0 -> Just (stillOpen - 1)
+                                   | c == stop && stillOpen == 0 -> Nothing
+                                   | satisfy c -> Just stillOpen
+                                   | otherwise -> Nothing)
 
 lineContinuation :: Parser Text
 lineContinuation = P.string "\\\n" <?> "line continuation"
@@ -217,10 +227,69 @@ makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
 
 unevaluatedText :: Parser UnevaluatedText
-unevaluatedText = many' utchunk
+unevaluatedText = UnevaluatedText <$> P.many' utchunk
 
 utchunk :: Parser Chunk
 utchunk = utplain <|>
           utvariableReference <|>
           utfunctionCall <|>
           (Plain <$> P.string "$$")
+
+utplain :: Parser Chunk
+utplain = Plain <$> P.takeWhile1 (/= '&')
+
+unevaluatedText' :: Char -> Char -> Parser UnevaluatedText
+unevaluatedText' start stop = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop 0 [])
+
+unevaluatedText'' :: Char -> Char -> Int -> [Chunk] -> Parser [Chunk]
+unevaluatedText'' start stop stillOpen cs = do
+  (c, stillOpen') <- utchunk' start stop stillOpen
+  if stillOpen' == 0
+    then return $ reverse $ c : cs
+    else unevaluatedText'' start stop stillOpen' (c:cs)
+
+utchunk' :: Char -> Char -> Int -> Parser (Chunk, Int)
+utchunk' start stop stillOpen =
+  utplain' start stop stillOpen <|>
+  (utvariableReference >>= (\c -> return (c, stillOpen))) <|>
+  (utfunctionCall >>= (\c -> return (c, stillOpen))) <|>
+  (P.string "$$" >> return (Plain "$$", stillOpen))
+
+utplain' :: Char -> Char -> Int -> Parser (Chunk, Int)
+utplain' start stop stillOpen = do
+  (t, stillOpen') <- stopAtClosing (\c -> c /= '$' && c /= '#' && c /= ':' && c /= '=' && not (isSpace c)) start stop stillOpen
+  return (Plain t, stillOpen')
+
+utvariableReference :: Parser Chunk
+utvariableReference = utvariableReferenceSingleChar <|> utvariableReferenceDelims
+
+utvariableReferenceSingleChar :: Parser Chunk
+utvariableReferenceSingleChar = do
+  _ <- P.char '$'
+  c <- P.satisfy (\c -> c /= ':' && c /= '#' && c /= '=' && not (isSpace c))
+  return $ VariableReference $ UnevaluatedText [Plain $ T.singleton c]
+
+closingChar :: Char -> Maybe Char
+closingChar '(' = Just ')'
+closingChar '{' = Just '}'
+closingChar _ = Nothing
+
+utvariableReferenceDelims :: Parser Chunk
+utvariableReferenceDelims = do
+  _ <- P.char '$'
+  start <- P.satisfy (\c -> c == '(' || c == '{')
+  let stop = fromJust $ closingChar start
+  name <- unevaluatedText' start stop
+  _ <- P.char stop
+  return $ VariableReference name
+
+utfunctionCall :: Parser Chunk
+utfunctionCall = do
+  _ <- P.char '$'
+  start <- P.satisfy (\c -> c == '(' || c == '{')
+  let stop = fromJust $ closingChar start
+  fName <- P.takeWhile1 (\c -> c /= ' ' && c /= '\t')
+  _ <- P.takeWhile1 (\c -> c == ' ' || c == '\t')
+
+  _ <- P.char stop
+  return $ FunctionCall fName []
