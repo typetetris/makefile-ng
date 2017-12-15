@@ -215,3 +215,12 @@ entry =  do
 
 makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
+
+unevaluatedText :: Parser UnevaluatedText
+unevaluatedText = many' utchunk
+
+utchunk :: Parser Chunk
+utchunk = utplain <|>
+          utvariableReference <|>
+          utfunctionCall <|>
+          (Plain <$> P.string "$$")
