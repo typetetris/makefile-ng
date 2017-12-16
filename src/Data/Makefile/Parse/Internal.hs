@@ -227,16 +227,20 @@ makefile :: Parser Makefile
 makefile = Makefile <$> P.many' entry
 
 unevaluatedText :: Parser UnevaluatedText
-unevaluatedText = UnevaluatedText <$> P.many' utchunk
+unevaluatedText = UnevaluatedText <$> P.many' (utchunk $ const True)
 
-utchunk :: Parser Chunk
-utchunk = utplain <|>
-          utvariableReference <|>
+unevaluatedText_ :: (Char -> Bool) -> Parser UnevaluatedText
+unevaluatedText_ acc = UnevaluatedText <$> P.many' (utchunk acc)
+
+utchunk :: (Char -> Bool) -> Parser Chunk
+utchunk acc = utplain acc <|>
+          utvariableReferenceDelims <|>
           utfunctionCall <|>
+          utvariableReferenceSingleChar <|>
           (Plain <$> P.string "$$")
 
-utplain :: Parser Chunk
-utplain = Plain <$> P.takeWhile1 (/= '&')
+utplain :: (Char -> Bool) -> Parser Chunk
+utplain acc = Plain <$> P.takeWhile1 (\c -> c /= '$' && acc c)
 
 unevaluatedText' :: Char -> Char -> (Char -> Bool) -> Parser UnevaluatedText
 unevaluatedText' start stop forbidden = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop forbidden 0 [])
@@ -251,8 +255,9 @@ unevaluatedText'' start stop forbidden stillOpen cs = do
 utchunk' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
 utchunk' start stop forbidden stillOpen =
   utplain' start stop (\c -> forbidden c && c /= '$') stillOpen <|>
-  (utvariableReference >>= (\c -> return (c, stillOpen))) <|>
+  (utvariableReferenceDelims >>= (\c -> return (c, stillOpen))) <|>
   (utfunctionCall >>= (\c -> return (c, stillOpen))) <|>
+  (utvariableReferenceSingleChar >>= (\c -> return (c,stillOpen))) <|>
   (P.string "$$" >> return (Plain "$$", stillOpen))
 
 utplain' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
@@ -261,9 +266,6 @@ utplain' start stop forbidden stillOpen = do
   if T.length t == 0
     then fail "at least one valid character expected"
     else return (Plain t, stillOpen')
-
-utvariableReference :: Parser Chunk
-utvariableReference = utvariableReferenceSingleChar <|> utvariableReferenceDelims
 
 utvariableReferenceSingleChar :: Parser Chunk
 utvariableReferenceSingleChar = do
@@ -292,6 +294,6 @@ utfunctionCall = do
   fName <- P.takeWhile1 (\c -> c /= ' ' && c /= '\t')
   _ <- P.takeWhile1 (\c -> c == ' ' || c == '\t')
   let stop = fromJust $ closingChar start
-  args <- P.sepBy unevaluatedText (P.char ',')
+  args <- P.sepBy (unevaluatedText_ (\c -> c /=',' && c /= stop)) (P.char ',')
   _ <- P.char stop
   return $ FunctionCall fName args
