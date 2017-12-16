@@ -127,9 +127,16 @@ makefile = describe "test makefile parsing" $ do
                                                                                               ]
                                                                                               (Comment "")])
 
+unevaluatedtext :: SpecWith ()
+unevaluatedtext = describe "test text parsing in makefiles" $ do
+  it "parses \"  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ\"" $
+    parseOnly PM.unevaluatedText "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ" `shouldBe`
+      Right (UnevaluatedText [Plain "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ"])
+
 main :: IO()
 main = hspec $ do
   basicTextParsing
   variableAssignment
   rule
   makefile
+  unevaluatedtext
