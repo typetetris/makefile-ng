@@ -238,27 +238,29 @@ utchunk = utplain <|>
 utplain :: Parser Chunk
 utplain = Plain <$> P.takeWhile1 (/= '&')
 
-unevaluatedText' :: Char -> Char -> Parser UnevaluatedText
-unevaluatedText' start stop = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop 0 [])
+unevaluatedText' :: Char -> Char -> (Char -> Bool) -> Parser UnevaluatedText
+unevaluatedText' start stop forbidden = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop forbidden 0 [])
 
-unevaluatedText'' :: Char -> Char -> Int -> [Chunk] -> Parser [Chunk]
-unevaluatedText'' start stop stillOpen cs = do
-  (c, stillOpen') <- utchunk' start stop stillOpen
+unevaluatedText'' :: Char -> Char -> (Char -> Bool) -> Int -> [Chunk] -> Parser [Chunk]
+unevaluatedText'' start stop forbidden stillOpen cs = do
+  (c, stillOpen') <- utchunk' start stop forbidden stillOpen
   if stillOpen' == 0
     then return $ reverse $ c : cs
-    else unevaluatedText'' start stop stillOpen' (c:cs)
+    else unevaluatedText'' start stop forbidden stillOpen' (c:cs)
 
-utchunk' :: Char -> Char -> Int -> Parser (Chunk, Int)
-utchunk' start stop stillOpen =
-  utplain' start stop stillOpen <|>
+utchunk' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
+utchunk' start stop forbidden stillOpen =
+  utplain' start stop (\c -> forbidden c && c /= '$') stillOpen <|>
   (utvariableReference >>= (\c -> return (c, stillOpen))) <|>
   (utfunctionCall >>= (\c -> return (c, stillOpen))) <|>
   (P.string "$$" >> return (Plain "$$", stillOpen))
 
-utplain' :: Char -> Char -> Int -> Parser (Chunk, Int)
-utplain' start stop stillOpen = do
-  (t, stillOpen') <- stopAtClosing (\c -> c /= '$' && c /= '#' && c /= ':' && c /= '=' && not (isSpace c)) start stop stillOpen
-  return (Plain t, stillOpen')
+utplain' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
+utplain' start stop forbidden stillOpen = do
+  (t, stillOpen') <- stopAtClosing forbidden start stop stillOpen
+  if T.length t == 0
+    then fail "at least one valid character expected"
+    else return (Plain t, stillOpen')
 
 utvariableReference :: Parser Chunk
 utvariableReference = utvariableReferenceSingleChar <|> utvariableReferenceDelims
@@ -279,7 +281,7 @@ utvariableReferenceDelims = do
   _ <- P.char '$'
   start <- P.satisfy (\c -> c == '(' || c == '{')
   let stop = fromJust $ closingChar start
-  name <- unevaluatedText' start stop
+  name <- unevaluatedText' start stop (\c -> c `notElem` (":#=" :: String) && not (isSpace c))
   _ <- P.char stop
   return $ VariableReference name
 
@@ -287,9 +289,9 @@ utfunctionCall :: Parser Chunk
 utfunctionCall = do
   _ <- P.char '$'
   start <- P.satisfy (\c -> c == '(' || c == '{')
-  let stop = fromJust $ closingChar start
   fName <- P.takeWhile1 (\c -> c /= ' ' && c /= '\t')
   _ <- P.takeWhile1 (\c -> c == ' ' || c == '\t')
-
+  let stop = fromJust $ closingChar start
+  args <- P.sepBy unevaluatedText (P.char ',')
   _ <- P.char stop
-  return $ FunctionCall fName []
+  return $ FunctionCall fName args
