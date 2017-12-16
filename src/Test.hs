@@ -132,6 +132,25 @@ unevaluatedtext = describe "test text parsing in makefiles" $ do
   it "parses \"  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ\"" $
     parseOnly PM.unevaluatedText "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ" `shouldBe`
       Right (UnevaluatedText [Plain "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ"])
+  it "parses \"$a\"" $
+    parseOnly PM.unevaluatedText "$a" `shouldBe`
+      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+  it "parses \"$(a)\"" $
+    parseOnly PM.unevaluatedText "$(a)" `shouldBe`
+      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+  it "parses \"${a}\"" $
+    parseOnly PM.unevaluatedText "${a}" `shouldBe`
+      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+  it "parses \"${patsubst a,b,aacc}\"" $
+    parseOnly PM.unevaluatedText "${patsubst a,b,aacc}" `shouldBe`
+      Right (UnevaluatedText [FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
+                                                      ,UnevaluatedText [Plain "b"]
+                                                      ,UnevaluatedText [Plain "aacc"]]])
+  it "parses \"${patsubst a,b,aacc}\"" $
+    parseOnly PM.utfunctionCall "${patsubst a,b,aacc}" `shouldBe`
+      Right (FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
+                                                     ,UnevaluatedText [Plain "b"]
+                                                     ,UnevaluatedText [Plain "aacc"]])
 
 main :: IO()
 main = hspec $ do
