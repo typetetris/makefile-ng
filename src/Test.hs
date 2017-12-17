@@ -138,6 +138,15 @@ utTests = [TableTest "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ
           ,TableTest "${patsubst a,b,aacc}"  (UnevaluatedText [FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
                                                       ,UnevaluatedText [Plain "b"]
                                                       ,UnevaluatedText [Plain "aacc"]]])
+          ,TableTest "${BASEDIR}/${BUILDDIR}/component1" (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "BASEDIR"]
+                                                                          ,Plain "/"
+                                                                          ,VariableReference $ UnevaluatedText [Plain "BUILDDIR"]
+                                                                          ,Plain "/component1"])
+          ,TableTest "{${{${REALLY?}}}}" (UnevaluatedText [Plain "{"
+                                                          ,VariableReference $ UnevaluatedText [Plain "{"
+                                                                                               ,VariableReference $ UnevaluatedText [Plain "REALLY?"]
+                                                                                               ,Plain "}"]
+                                                          ,Plain "}"])
           ]
 
 unevaluatedtext :: SpecWith ()
