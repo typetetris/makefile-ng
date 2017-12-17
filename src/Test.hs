@@ -151,6 +151,14 @@ unevaluatedtext = describe "test text parsing in makefiles" $ do
       Right (FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
                                                      ,UnevaluatedText [Plain "b"]
                                                      ,UnevaluatedText [Plain "aacc"]])
+  it "parses \"$(patsubst ((,)),(()),((,))aabbcc)\"" $
+    parseOnly PM.utfunctionCall "$(patsubst ((,)),(()),((,))aabbcc)" `shouldBe`
+      Right (FunctionCall "patsubst" [UnevaluatedText [Plain "((,))"]
+                                                     ,UnevaluatedText [Plain "(())"]
+                                                     ,UnevaluatedText [Plain "((,))aabbcc"]])
+  it "parses \"((,))\"" $
+    parseOnly (PM.unevaluatedText' '(' ')' (/= ',') (const True)) "((,))" `shouldBe`
+      Right (UnevaluatedText [Plain "((,))"])
 
 main :: IO()
 main = hspec $ do
