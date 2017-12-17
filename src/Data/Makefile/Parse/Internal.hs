@@ -37,14 +37,15 @@ recipeLine2 = do
   (_, (b, _)) <- P.runScanner (LTB.fromText T.empty, Clear) pNC
   return $ LT.toStrict $ LTB.toLazyText b
 
-stopAtClosing :: (Char -> Bool) -> Char -> Char -> Int -> Parser (Text, Int)
-stopAtClosing satisfy start stop danglingOpen = go
+stopAtClosing :: (Char -> Bool) -> (Char -> Bool) -> Char -> Char -> Int -> Parser (Text, Int)
+stopAtClosing accOutside accNested start stop danglingOpen = go
   where
     go = P.runScanner danglingOpen (\stillOpen c -> case c of
                                  _ | c == start -> Just (stillOpen + 1)
                                    | c == stop && stillOpen > 0 -> Just (stillOpen - 1)
                                    | c == stop && stillOpen == 0 -> Nothing
-                                   | satisfy c -> Just stillOpen
+                                   | stillOpen == 0 && accOutside c -> Just stillOpen
+                                   | stillOpen > 0 && accNested c -> Just stillOpen
                                    | otherwise -> Nothing)
 
 lineContinuation :: Parser Text
@@ -229,9 +230,6 @@ makefile = Makefile <$> P.many' entry
 unevaluatedText :: Parser UnevaluatedText
 unevaluatedText = UnevaluatedText <$> P.many' (utchunk $ const True)
 
-unevaluatedText_ :: (Char -> Bool) -> Parser UnevaluatedText
-unevaluatedText_ acc = UnevaluatedText <$> P.many' (utchunk acc)
-
 utchunk :: (Char -> Bool) -> Parser Chunk
 utchunk acc = utplain acc <|>
           utvariableReferenceDelims <|>
@@ -242,27 +240,27 @@ utchunk acc = utplain acc <|>
 utplain :: (Char -> Bool) -> Parser Chunk
 utplain acc = Plain <$> P.takeWhile1 (\c -> c /= '$' && acc c)
 
-unevaluatedText' :: Char -> Char -> (Char -> Bool) -> Parser UnevaluatedText
-unevaluatedText' start stop forbidden = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop forbidden 0 [])
+unevaluatedText' :: Char -> Char -> (Char -> Bool) -> (Char -> Bool) -> Parser UnevaluatedText
+unevaluatedText' start stop accOutside accNested = UnevaluatedText . concat <$> P.many' (unevaluatedText'' start stop accOutside accNested 0 [])
 
-unevaluatedText'' :: Char -> Char -> (Char -> Bool) -> Int -> [Chunk] -> Parser [Chunk]
-unevaluatedText'' start stop forbidden stillOpen cs = do
-  (c, stillOpen') <- utchunk' start stop forbidden stillOpen
+unevaluatedText'' :: Char -> Char -> (Char -> Bool) -> (Char -> Bool) -> Int -> [Chunk] -> Parser [Chunk]
+unevaluatedText'' start stop accOutside accNested stillOpen cs = do
+  (c, stillOpen') <- utchunk' start stop accOutside accNested stillOpen
   if stillOpen' == 0
     then return $ reverse $ c : cs
-    else unevaluatedText'' start stop forbidden stillOpen' (c:cs)
+    else unevaluatedText'' start stop accOutside accNested stillOpen' (c:cs)
 
-utchunk' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
-utchunk' start stop forbidden stillOpen =
-  utplain' start stop (\c -> forbidden c && c /= '$') stillOpen <|>
+utchunk' :: Char -> Char -> (Char -> Bool) -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
+utchunk' start stop accOutside accNested stillOpen =
+  utplain' start stop (\c -> accOutside c && c /= '$') (\c -> accNested c && c /= '$') stillOpen <|>
   (utvariableReferenceDelims >>= (\c -> return (c, stillOpen))) <|>
   (utfunctionCall >>= (\c -> return (c, stillOpen))) <|>
   (utvariableReferenceSingleChar >>= (\c -> return (c,stillOpen))) <|>
   (P.string "$$" >> return (Plain "$$", stillOpen))
 
-utplain' :: Char -> Char -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
-utplain' start stop forbidden stillOpen = do
-  (t, stillOpen') <- stopAtClosing forbidden start stop stillOpen
+utplain' :: Char -> Char -> (Char -> Bool) -> (Char -> Bool) -> Int -> Parser (Chunk, Int)
+utplain' start stop accOutside accNested stillOpen = do
+  (t, stillOpen') <- stopAtClosing accOutside accNested start stop stillOpen
   if T.length t == 0
     then fail "at least one valid character expected"
     else return (Plain t, stillOpen')
@@ -283,7 +281,8 @@ utvariableReferenceDelims = do
   _ <- P.char '$'
   start <- P.satisfy (\c -> c == '(' || c == '{')
   let stop = fromJust $ closingChar start
-  name <- unevaluatedText' start stop (\c -> c `notElem` (":#=" :: String) && not (isSpace c))
+  let charTest = \c -> c `notElem` (":#=" :: String) && not (isSpace c)
+  name <- unevaluatedText' start stop charTest charTest
   _ <- P.char stop
   return $ VariableReference name
 
@@ -294,6 +293,6 @@ utfunctionCall = do
   fName <- P.takeWhile1 (\c -> c /= ' ' && c /= '\t')
   _ <- P.takeWhile1 (\c -> c == ' ' || c == '\t')
   let stop = fromJust $ closingChar start
-  args <- P.sepBy (unevaluatedText_ (\c -> c /=',' && c /= stop)) (P.char ',')
-  _ <- P.char stop
+  args <- P.sepBy (unevaluatedText' start stop (/=',') (const True)) (P.char ',')
+  _ <- P.char stop <?> "Function call closing delimeter"
   return $ FunctionCall fName args
