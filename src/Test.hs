@@ -4,12 +4,13 @@ module Main where
 import Test.Hspec
 import Data.Attoparsec.Text
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Makefile
 import Data.Either (isLeft)
 import qualified Data.Makefile.Parse.Internal as PM
 
-simpleAEqualb :: Either a Entry
-simpleAEqualb = Right (VariableAssignment (VariableName "a") Recursive (VariableValue "b") (Comment ""))
+simpleAEqualb :: Entry
+simpleAEqualb = VariableAssignment (VariableName "a") Recursive (VariableValue "b") (Comment "")
 
 varWithColonValue :: Entry
 varWithColonValue = VariableAssignment (VariableName "VARNAME") Recursive (VariableValue ":") (Comment "")
@@ -18,78 +19,80 @@ basicTextParsing :: SpecWith ()
 basicTextParsing  =
   describe "basic make text parsing" $
     it "parses \"abc\" as a standard make text" $
-      parseOnly (PM.standardMakeTextChunk "#") "abc" `shouldBe` (Right "abc")
+      parseOnly (PM.standardMakeTextChunk "#") "abc" `shouldBe` Right "abc"
+
+data TableTest a = TableTest Text a
+
+vaaTests :: [TableTest Entry]
+vaaTests = [TableTest "a = b\n" simpleAEqualb
+           ,TableTest "a \\\n    = b\n" simpleAEqualb
+           ,TableTest "a \\\n   = \\\nb\n" simpleAEqualb
+           ,TableTest "a \\\n   = \\\n\tb\n" simpleAEqualb
+           ,TableTest "VARNAME = :\n" varWithColonValue
+           ,TableTest "VARNAME =\n" $ VariableAssignment (VariableName "VARNAME") Recursive (VariableValue "") (Comment "")
+           ,TableTest "$(VARNAMEINVAR) = value\n" $ VariableAssignment (VariableName "$(VARNAMEINVAR)") Recursive (VariableValue "value") (Comment "")
+           ,TableTest "${VARNAMEINVAR} = value\n" $ VariableAssignment (VariableName "${VARNAMEINVAR}") Recursive (VariableValue "value") (Comment "")]
+
+doTableTest :: (Eq a, Show a) => Parser a -> TableTest a -> SpecWith (Arg Expectation)
+doTableTest parser (TableTest input output) = it ("parses " ++ T.unpack input) (parseOnly parser input `shouldBe` Right output)
 
 variableAssignment :: SpecWith ()
 variableAssignment =
   describe "Basic Variable Assignment" $ do
-    it "parses a = b\\n" $
-      parseOnly PM.variableAssignment
-      "a = b\n" `shouldBe` simpleAEqualb
-    it "parses a \\\n    = b\\n" $
-      parseOnly PM.variableAssignment
-      "a \\\n   = b\n" `shouldBe` simpleAEqualb
-    it "parses a \\\n  = \\\nb\\n" $
-      parseOnly PM.variableAssignment
-      "a \\\n   = \\\nb\n" `shouldBe` simpleAEqualb
-    it "parses a \\\n  = \\\n\tb\\n" $
-      parseOnly PM.variableAssignment
-      "a \\\n   = \\\n\tb\n" `shouldBe` simpleAEqualb
     it "should fail on '  a  b = c \n'" $
       parseOnly PM.variableAssignment
       "  a  b = c \n" `shouldSatisfy` isLeft
-    it "parses 'VARNAME = :\\n'" $
-      parseOnly PM.variableAssignment
-      "VARNAME = :\n" `shouldBe` Right varWithColonValue
-    it "parses an empty variable value 'VARNAME =\\n'" $
-      parseOnly PM.variableAssignment
-      "VARNAME =\n" `shouldBe` Right (VariableAssignment (VariableName "VARNAME") Recursive (VariableValue "") (Comment ""))
-    it "parses '$(VARNAMEINVAR) = value'" $
-      parseOnly PM.variableAssignment
-      "$(VARNAMEINVAR) = value\n" `shouldBe` Right (VariableAssignment (VariableName "$(VARNAMEINVAR)") Recursive (VariableValue "value") (Comment ""))
-    it "parses '${VARNAMEINVAR} = value'" $
-      parseOnly PM.variableAssignment
-      "${VARNAMEINVAR} = value\n" `shouldBe` Right (VariableAssignment (VariableName "${VARNAMEINVAR}") Recursive (VariableValue "value") (Comment ""))
+    mapM_ (doTableTest PM.variableAssignment) vaaTests
+
+srTests :: [TableTest Entry]
+srTests = [TableTest "a:\n"                                   (SimpleRule (Target "a") Dependencies{normal="", orderOnly=""} [] (Comment ""))
+          , TableTest "a: b\n"                                (SimpleRule (Target "a") Dependencies{normal="b", orderOnly=""} [] (Comment ""))
+          , TableTest "a: b|c\n"                              (SimpleRule (Target "a") Dependencies{normal="b", orderOnly="c"} [] (Comment ""))
+          , TableTest "a: b|c#Muhaha\n"                       (SimpleRule (Target "a") Dependencies{normal="b", orderOnly="c"} [] (Comment "Muhaha"))
+          , TableTest "a: b|c#Muhaha\n\tfirst recipe line\n"  (SimpleRule (Target "a") Dependencies{normal="b", orderOnly="c"} [RecipeLine "first recipe line"] (Comment "Muhaha"))
+          , TableTest "a: b|c#Muhaha\n\tfirst recipe line\\\n\twith a line continuation\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal="b", orderOnly="c"}
+                        [RecipeLine "first recipe line\\\nwith a line continuation"]
+                        (Comment "Muhaha"))
+          , TableTest "a: b|c#Muhaha\n\tfirst recipe line\n\n\tsecond recipe line after empty line\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal="b", orderOnly="c"}
+                        (map RecipeLine [ "first recipe line"
+                                        , "second recipe line after empty line"])
+                        (Comment "Muhaha"))
+          , TableTest "a: b|c#Muhaha\n\tfirst recipe line\n \t   \n\tsecond recipe line after whitespace line\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal="b", orderOnly="c"}
+                        (map RecipeLine [ "first recipe line"
+                                        , "second recipe line after whitespace line"])
+                        (Comment "Muhaha"))
+          , TableTest "a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after comment only line\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal="b", orderOnly="c"}
+                        (map RecipeLine [ "first recipe line"
+                                        , "second recipe line after comment only line"])
+                        (Comment "Muhaha"))
+          , TableTest "a: b ; do something\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal = "b ", orderOnly = ""}
+                        [RecipeLine " do something"]
+                        (Comment ""))
+          , TableTest "a: b ; do something # comment on inlineRecipeLine\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal = "b ", orderOnly = ""}
+                        [RecipeLine " do something # comment on inlineRecipeLine"]
+                        (Comment ""))
+          , TableTest "a: b ; do something # comment on inlineRecipeLine\n\tsecond Recipe Line # with comment\n"
+            (SimpleRule (Target "a")
+                        Dependencies{normal = "b ", orderOnly = ""}
+                        [RecipeLine " do something # comment on inlineRecipeLine", RecipeLine "second Recipe Line # with comment"]
+                        (Comment ""))
+          ]
 
 rule :: SpecWith ()
 rule =
-  describe "Parsing of rules" $ do
-    it "parses a:\n" $
-      parseOnly PM.simpleRule
-      "a:\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="", orderOnly=""}) [] (Comment ""))
-    it "parses a: b\n" $
-      parseOnly PM.simpleRule
-      "a: b\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly=""}) [] (Comment ""))
-    it "parses a: b|c\n" $
-      parseOnly PM.simpleRule
-      "a: b|c\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [] (Comment ""))
-    it "parses a: b|c#Muhaha\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [] (Comment "Muhaha"))
-    it "parses a: b|c#Muhaha\n\tfirst recipe line\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n\tfirst recipe line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [RecipeLine "first recipe line"] (Comment "Muhaha"))
-    it "parses a: b|c#Muhaha\n\tfirst recipe line\\\n\twith a line continuation\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n\tfirst recipe line\\\n\twith a line continuation\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) [RecipeLine "first recipe line\\\nwith a line continuation"] (Comment "Muhaha"))
-    it "parses a: b|c#Muhaha\n\tfirst recipe line\n\n\tsecond recipe line after empty line\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n\tfirst recipe line\n\n\tsecond recipe line after empty line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after empty line"]) (Comment "Muhaha"))
-    it "parses a: b|c#Muhaha\n\tfirst recipe line\n \t   \n\tsecond recipe line after whitespace line\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n\tfirst recipe line\n \t   \n\tsecond recipe line after whitespace line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after whitespace line"]) (Comment "Muhaha"))
-    it "parses a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after whitespace line\n" $
-      parseOnly PM.simpleRule
-      "a: b|c#Muhaha\n\tfirst recipe line\n#comment stuff on line sadly lost for now  \n\tsecond recipe line after comment only line\n" `shouldBe` Right (SimpleRule (Target "a") (Dependencies{normal="b", orderOnly="c"}) (map RecipeLine ["first recipe line", "second recipe line after comment only line"]) (Comment "Muhaha"))
-    it "parses a: b ; do something\n" $
-      parseOnly PM.simpleRule "a: b ; do something\n" `shouldBe`
-           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something"] (Comment ""))
-    it "parses a: b ; do something # comment on inlineRecipeLine\n" $
-      parseOnly PM.simpleRule "a: b ; do something # comment on inlineRecipeLine\n" `shouldBe`
-           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something # comment on inlineRecipeLine"] (Comment ""))
-    it "parses a: b ; do something # comment on inlineRecipeLine\n\tsecond Recipe Line # with comment\n" $
-      parseOnly PM.simpleRule "a: b ; do something # comment on inlineRecipeLine\n\tsecond Recipe Line # with comment\n" `shouldBe`
-           Right (SimpleRule (Target "a") Dependencies{normal = "b ", orderOnly = ""} [RecipeLine " do something # comment on inlineRecipeLine", RecipeLine "second Recipe Line # with comment"] (Comment ""))
+  describe "Parsing of rules" $ mapM_ (doTableTest PM.simpleRule) srTests
 
 smallMakefileResult :: Makefile
 smallMakefileResult = Makefile
@@ -111,44 +114,37 @@ smallMakefile = "\
 \\tmöp\n\
 \${wtf} ?= ${wtf2} # comment on that boy!\n"
 
-
-makefile :: SpecWith ()
-makefile = describe "test makefile parsing" $ do
-  it "parses a little makefile" $
-    parseOnly PM.makefile smallMakefile `shouldBe` Right smallMakefileResult
-  it "parses 'VARNAME = :\\n'" $
-    parseOnly PM.makefile "VARNAME = :\n" `shouldBe` Right (Makefile [varWithColonValue])
-  it "parses 'define VARNAME\nline1\nline2\nendef\n'" $
-    parseOnly PM.makefile "define VARNAME\nline1\nline2\nendef\n" `shouldBe` Right (Makefile [MultilineVariableAssignment
+mfTests :: [TableTest Makefile]
+mfTests = [TableTest smallMakefile smallMakefileResult
+          ,TableTest "VARNAME = :\n" $ Makefile [varWithColonValue]
+          ,TableTest "define VARNAME\nline1\nline2\nendef\n" $ Makefile [MultilineVariableAssignment
                                                                                               (VariableName "VARNAME")
                                                                                               Recursive
                                                                                               [ VariableValue "line1"
                                                                                               , VariableValue "line2"
                                                                                               ]
-                                                                                              (Comment "")])
+                                                                                              (Comment "")]
+          ]
+
+
+makefile :: SpecWith ()
+makefile = describe "test makefile parsing" $ mapM_ (doTableTest PM.makefile) mfTests
+
+utTests :: [TableTest UnevaluatedText]
+utTests = [TableTest "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ"  (UnevaluatedText [Plain "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ"])
+          ,TableTest "$a"  (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+          ,TableTest "$(a)"  (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+          ,TableTest "${a}"  (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+          ,TableTest "${patsubst a,b,aacc}"  (UnevaluatedText [FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
+                                                      ,UnevaluatedText [Plain "b"]
+                                                      ,UnevaluatedText [Plain "aacc"]]])
+          ]
 
 unevaluatedtext :: SpecWith ()
 unevaluatedtext = describe "test text parsing in makefiles" $ do
-  it "parses \"  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ\"" $
-    parseOnly PM.unevaluatedText "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ" `shouldBe`
-      Right (UnevaluatedText [Plain "  uiae u:=# uiae \\iae \\\\\nuiaed\\duiaeiaedrnxvlczιαλ"])
-  it "parses \"$a\"" $
-    parseOnly PM.unevaluatedText "$a" `shouldBe`
-      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
-  it "parses \"$(a)\"" $
-    parseOnly PM.unevaluatedText "$(a)" `shouldBe`
-      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
-  it "parses \"${a}\"" $
-    parseOnly PM.unevaluatedText "${a}" `shouldBe`
-      Right (UnevaluatedText [VariableReference $ UnevaluatedText [Plain "a"]])
+  mapM_ (doTableTest PM.unevaluatedText) utTests
   it "parses \"${patsubst a,b,aacc}\"" $
-    parseOnly PM.unevaluatedText "${patsubst a,b,aacc}" `shouldBe`
-      Right (UnevaluatedText [FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
-                                                      ,UnevaluatedText [Plain "b"]
-                                                      ,UnevaluatedText [Plain "aacc"]]])
-  it "parses \"${patsubst a,b,aacc}\"" $
-    parseOnly PM.utfunctionCall "${patsubst a,b,aacc}" `shouldBe`
-      Right (FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
+    parseOnly PM.utfunctionCall "${patsubst a,b,aacc}" `shouldBe` Right (FunctionCall "patsubst" [UnevaluatedText [Plain "a"]
                                                      ,UnevaluatedText [Plain "b"]
                                                      ,UnevaluatedText [Plain "aacc"]])
   it "parses \"$(patsubst ((,)),(()),((,))aabbcc)\"" $
