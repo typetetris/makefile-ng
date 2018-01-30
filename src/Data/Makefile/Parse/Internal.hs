@@ -281,7 +281,7 @@ utvariableReferenceDelims = do
   _ <- P.char '$'
   start <- P.satisfy (\c -> c == '(' || c == '{')
   let stop = fromJust $ closingChar start
-  let charTest = \c -> c `notElem` (":#=" :: String) && not (isSpace c)
+  let charTest c = c `notElem` (":#=" :: String) && not (isSpace c)
   name <- unevaluatedText' start stop charTest charTest
   _ <- P.char stop
   return $ VariableReference name
